@@ -1,0 +1,120 @@
+---
+description: Practical knowledge for working on pyms services.
+globs:
+  - services/pyms/**
+---
+
+# pyms Services
+
+## How Local Dev Works
+
+Local dirs are hostPath-mounted into the K8s pod (defined in `values.yaml`):
+- `services/pyms/<service>/app` → `/app`, `tests` → `/tests`, `db` → `/db`, `packages/` → `/packages`
+- Edits are immediately visible in the pod. No copy/sync needed.
+- **Not all services have hostPath mounts configured.** If edits aren't reflected in the pod, verify with `kubectl exec $POD -- head -5 /app/<file>`. If stale, use `kubectl cp` to push files, then copy formatted files back after `paver format`.
+
+## Git Branching
+
+To create a new branch from latest master:
+```bash
+git fetch origin master && git checkout -b "bhagyesh.<JIRA-ID-short-description>" origin/master
+```
+
+## Before Writing New Code
+
+**Always read an existing similar file first.** Don't invent patterns — match what's already there.
+
+## Configuration
+
+- All tuneable values go in `values.yaml`, injected as TOML ConfigMap/Secret. No hardcoded magic numbers.
+- Config sections should be alphabetically ordered.
+- Pod must be restarted after secret/ConfigMap changes.
+
+### Updating Pod Config Without `sd` (rare)
+
+Only needed when `values.yaml` has config sections the running pod's secret doesn't (e.g. tests fail with `KeyError` on a config key). In most cases, skip this — the existing pod config is fine.
+
+```bash
+# 1. Write updated configuration.toml to /tmp/configuration.toml
+# 2. Patch the secret in-place
+kubectl get secret pyms-<service> -o json | python3 -c "
+import sys, json, base64
+secret = json.load(sys.stdin)
+with open('/tmp/configuration.toml', 'rb') as f:
+    secret['data']['configuration.toml'] = base64.b64encode(f.read()).decode()
+json.dump(secret, sys.stdout)
+" | kubectl apply -f -
+# 3. Delete pod to restart (see Restarting the Pod section)
+```
+
+## Code Style
+
+- No docstrings. No narrating comments.
+- Strict pylint naming: min 3-char variable/arg names, max 50-char function names.
+- Unused imports are fatal.
+- NEVER run `python -m pytest`, `python -m mypy`, `black`, `isort`, or `flake8` directly. Always use `paver` commands — they apply the correct project config flags automatically.
+
+## Testing
+
+- Tests run against real Postgres inside the pod.
+- Shared tables are read by multiple query functions — test data inserted for one affects others.
+- Always cover: boundary values, no historical data, multiple members, configurable overrides, data outside query windows.
+
+## After All Code Changes Are Complete — Checklist
+
+**NEVER report a task as complete without running `paver format lint` and tests first. No exceptions.**
+
+Do these in order:
+
+1. **Remove all Python comments and docstrings.** Codebase convention is bare code.
+2. **Check for bugs and OOP violations.** Review logic, missing edge cases, wrong abstractions.
+3. **Think about optimizations.** Can you use more language/library features to simplify?
+4. **Add more edge unit tests.** Boundary values, empty inputs, multiple members, configurable overrides, data outside windows.
+5. **Run format+lint and tests.** Use `kubectl exec` (do NOT use `paver` directly — it needs a venv that isn't active):
+
+```bash
+# Get pod name (do once per session)
+POD=$(kubectl get pod -l app=pyms-<service> -o jsonpath='{.items[0].metadata.name}')
+
+# Format + lint (timeout: 120000ms)
+kubectl exec -it $POD -- paver format lint
+
+# Run ONLY the test file you touched (fast feedback, timeout: 60000ms)
+kubectl exec -it $POD -- py.test /tests/test_foo.py -q
+
+# Run a single test by name
+kubectl exec -it $POD -- py.test /tests/test_foo.py -q -k test_bar
+
+# Run ALL tests — only if user explicitly asks (takes minutes, recreates DB)
+# kubectl exec -it $POD -- paver test
+```
+
+Run only the specific test file you touched. Do NOT run the full suite unless the user asks.
+
+**Test/lint output can be very large.** Only read the last ~50 lines (tail) for summary/failures.
+
+6. **Fix any failures, repeat until both pass.**
+7. **If using `kubectl cp`** (no hostPath mounts), copy formatted files back to host after `paver format` so your local files match what's in the pod.
+8. **Generate MR description.** Once all tests are green and lint passes, generate a Merge Request description following the [MR description rule](mdc:mr-description.mdc) and write it to `MR_DESCRIPTION.md` at the workspace root. Base it on the changes made during the session (files touched, logic added, tests written). **Use Sonnet for this step** — it's a writing task, not a coding task, so the cheaper model is sufficient.
+
+## Restarting the Pod
+
+Pods are Deployments — delete and K8s auto-creates a new one:
+
+```bash
+kubectl delete pod $POD --wait=false
+sleep 5
+POD=$(kubectl get pod -l app=pyms-<service> -o jsonpath='{.items[0].metadata.name}')
+```
+
+If NO pod exists at all (first-time setup), ask the user to run `sd` from their terminal.
+
+## Cleanup — Last Step Before Ending
+
+Cursor may create git worktrees under `~/.cursor/worktrees/` that bloat disk and cause VS Code lag (file watchers). Clean them up at the end of each session:
+
+```bash
+git worktree list
+# Remove any worktrees under ~/.cursor/worktrees/
+git worktree remove ~/.cursor/worktrees/smarkets/* --force 2>/dev/null; git worktree prune
+```
