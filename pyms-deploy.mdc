@@ -1,0 +1,45 @@
+---
+description: Generate kubectl commands to hot-deploy pyms config changes to prod. Use when user says "deploy config" or "generate deploy commands" for a pyms service.
+globs:
+  - "**/pyms_config/**/values.yaml"
+---
+
+# PyMS Config Deploy Command Generator
+
+When the user wants to deploy config changes for a pyms service, generate the exact kubectl commands they can copy-paste on the prod bastion. No git or python needed on prod.
+
+## Steps
+
+1. Read the values.yaml file the user provides
+2. Extract all keys under `configuration.data` (e.g. `configuration.toml`, `gunicorn.py`, `logging.config`)
+3. For each key, base64-encode the content
+4. Generate a single `kubectl patch secret` command with all the encoded values
+5. Output ready-to-paste kubectl commands
+
+## Output Format
+
+Always output the commands in this format:
+
+```bash
+# === Hot deploy for pyms-<service> ===
+# Generated from: <values.yaml path>
+# Changed keys: <list>
+
+# Step 1: Patch Secret
+kubectl patch secret pyms-<service> -n pyms -p '{"data":{"configuration.toml":"<base64>", ...}}'
+
+# Step 2: Verify
+kubectl get secret pyms-<service> -n pyms -o jsonpath='{.data.configuration\.toml}' | base64 -d | grep -A3 <relevant_section>
+
+# Step 3: Reload pods using pyms-reload.sh
+#   SIGHUP (config-only):   bash pyms-reload.sh <service>
+#   Argo restart:            bash pyms-reload.sh <service> --restart
+```
+
+## Rules
+
+- Base64-encode with NO line wraps (base64 -w0 equivalent)
+- Never include secrets/passwords in the explanation text, only in the encoded patch command
+- Always include a verify step so the user can confirm the patch took
+- Always tell the user which keys changed and why SIGHUP vs restart was chosen
+- If the user hasn't specified what changed, ask them or diff against the current branch
