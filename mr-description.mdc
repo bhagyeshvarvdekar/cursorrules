@@ -1,0 +1,57 @@
+---
+description: Generate a Merge Request description from a Git commit hash. Use when the user says "for this <commit_hash>" or asks for an MR description.
+model: sonnet
+---
+
+# MR Description Generator
+
+**Model preference: Use Sonnet for this task — it's a writing task, not a coding task.**
+
+When the user provides a commit hash (or says "for this <hash>"), generate a concise MR description and write it to `MR_DESCRIPTION.md` at the workspace root.
+
+## How to Gather Context
+
+1. Run `git show <hash> --stat` and `git show <hash>` to get the full diff.
+2. If the commit is not found, try `git fetch` first, then search across branches with `git log --all --oneline | grep <short_hash>`.
+3. Read surrounding code if the diff alone doesn't make the intent clear.
+
+## Output Format
+
+Write the description to `/home/bhagyesh/smarkets/MR_DESCRIPTION.md` using this template:
+
+```markdown
+## Description
+
+One or two sentences summarising **what** the change does and **why** it is needed. Focus on the business or technical reason, not the code mechanics.
+
+### Why
+
+A short paragraph explaining the context, motivation, and any problems this solves. Use simple, clear British English. No code snippets — just explain the reasoning.
+
+### Changes
+
+- Bullet list of the major changes, each in one plain-English sentence.
+- Focus on behaviour, not file names or function signatures.
+- Keep it concise — the diff is already in the MR.
+
+### Testing
+
+- Bullet list describing how the changes were tested (new unit tests, updated existing tests, manual checks, etc.).
+
+### Deployment Plan
+
+Only include this section if the commit touches multiple services that need coordinated deployment. Describe the order and any dependencies.
+
+### Jira
+
+- [TICKET-ID] or [STREAM-NAME] — link to the relevant Jira ticket or stream.
+```
+
+## Writing Style Rules
+
+- **Simple British English.** Short, direct sentences.
+- **No code snippets** in the description — no SQL, no Python, no function names unless essential for clarity.
+- **No narration** ("This commit adds…", "I have made…"). Start with what and why directly.
+- **No verbosity.** No introductory fluff ("Certainly!", "Here's the MR description").
+- Describe **why** something was done, not just **what** was changed — the diff already shows the what.
+- If V1/V2 separation is relevant (e.g. RG flags), explicitly state that the change does not affect the other version.
